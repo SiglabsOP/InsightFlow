@@ -12,6 +12,9 @@ import matplotlib.ticker as ticker
 from matplotlib.widgets import Cursor
 from matplotlib import gridspec
 from matplotlib.patches import Rectangle
+import matplotlib.patches as mpatches 
+     
+
 import tkinter as tk
 from tkinter import ttk
 import threading
@@ -23,6 +26,12 @@ import shutil
 import sys
 import subprocess  # Make sure subprocess is imported
 
+# Declare all global variables for plot elements
+fig, ax1 = None, None
+line_close, line_short_sma, line_long_sma, line_ema = None, None, None, None
+line_upper_bb, line_lower_bb, line_chikou = None, None, None
+scatter_sar, cloud_bullish, cloud_bearish = None, None, None
+
 
 from matplotlib.widgets import Slider
 from tkinter import scrolledtext
@@ -30,7 +39,7 @@ USE_THREADING = True  # Set to True to enable threading
 hover_last_update = 0  # Initialize at the start of the script
 
 
-tickerr = 'TQQQ'  # Default value, dynamically updated by target.py
+tickerr = 'SPY'  # Default value, dynamically updated by target.py
 
 def validate_and_clean_cache():
     """
@@ -39,7 +48,7 @@ def validate_and_clean_cache():
     """
     cache_dir = 'cache'
     corrupted = False
-    expected_columns = {'Adj Close_TQQQ', 'Close_TQQQ', 'High_TQQQ', 'Low_TQQQ', 'Open_TQQQ', 'Volume_TQQQ'}
+    expected_columns = {'Adj Close_SPY', 'Close_SPY', 'High_SPY', 'Low_SPY', 'Open_SPY', 'Volume_SPY'}
 
     if os.path.exists(cache_dir):
         for file in os.listdir(cache_dir):
@@ -126,7 +135,7 @@ def fetch_data_threaded(ticker, period, interval, callback=None):
     If threading is enabled, it uses ThreadPoolExecutor to run tasks in the background.
 
     Parameters:
-        ticker (str): Stock ticker symbol (e.g., "TQQQ").
+        ticker (str): Stock ticker symbol (e.g., "SPY").
         period (str): Data period (e.g., "1y").
         interval (str): Data interval (e.g., "1d").
         callback (function): Optional callback to process the fetched data.
@@ -213,7 +222,7 @@ async def fetch_data_in_background_async():
     """
     Asynchronously fetch data in the background and process it.
     """
-    data = await asyncio.get_event_loop().run_in_executor(executor, get_data, 'TQQQ', "1y", "1d")
+    data = await asyncio.get_event_loop().run_in_executor(executor, get_data, 'SPY', "1y", "1d")
     process_data(data)
 
 
@@ -344,7 +353,7 @@ def fetch_and_cache_data(ticker, period, interval, cache_path):
         print(f"No data found for ticker: {ticker}")
 
 
-def get_data(ticker='TQQQ', period='5y', interval='1d', use_cache=True):
+def get_data(ticker='SPY', period='5y', interval='1d', use_cache=True):
     # Create the cache directory if it doesn't exist
     cache_dir = 'cache'
     if not os.path.exists(cache_dir):
@@ -391,7 +400,7 @@ def get_data(ticker='TQQQ', period='5y', interval='1d', use_cache=True):
 
 
  
-def get_data(ticker='TQQQ', period='5y', interval='1d', use_cache=True):
+def get_data(ticker='SPY', period='5y', interval='1d', use_cache=True):
     # Create the cache directory if it doesn't exist
     cache_dir = 'cache'
     if not os.path.exists(cache_dir):
@@ -417,7 +426,7 @@ def get_data(ticker='TQQQ', period='5y', interval='1d', use_cache=True):
             thread.start()
             data = pd.DataFrame()  # Empty dataframe as a placeholder
  
-def get_data(ticker='TQQQ', period='5y', interval='1d', use_cache=True):
+def get_data(ticker='SPY', period='5y', interval='1d', use_cache=True):
     # Create the cache directory if it doesn't exist
     cache_dir = 'cache'
     if not os.path.exists(cache_dir):
@@ -452,13 +461,13 @@ def get_data(ticker='TQQQ', period='5y', interval='1d', use_cache=True):
 
     return data
     
-def add_indicators(data, ticker='TQQQ'):
+def add_indicators(data, ticker='SPY'):
     """
     Adds various technical indicators to the given data.
 
     Parameters:
         data (pd.DataFrame): The data containing stock prices and volume.
-        ticker (str): Stock ticker symbol to dynamically form column names (default is "TQQQ").
+        ticker (str): Stock ticker symbol to dynamically form column names (default is "SPY").
 
     Returns:
         pd.DataFrame: The data with added indicators.
@@ -523,7 +532,7 @@ def add_indicators(data, ticker='TQQQ'):
     data['vwma'] = (typical_price * data[volume_col]).rolling(window=20).sum() / data[volume_col].rolling(window=20).sum()
 
 
-    data['parabolic_sar'] = data['Low_TQQQ'].rolling(window=2).min()
+    data['parabolic_sar'] = data['Low_SPY'].rolling(window=2).min()
     
     
     # ADX (Average Directional Index)
@@ -710,7 +719,9 @@ def create_chart(data):
     Parameters:
         data (pd.DataFrame): The data containing stock prices, volume, and indicators.
     """
-    global fig, ax1  # Declare ax1 as global
+    global fig, ax1, line_close, line_short_sma, line_long_sma, line_ema
+    global line_upper_bb, line_lower_bb, line_chikou, scatter_sar
+    global cloud_bullish, cloud_bearish  # Add other relevant elements as global
 
     fig = plt.figure(figsize=(16, 20))
     fig.canvas.manager.set_window_title('InsightFlow Private Investment Software')
@@ -845,10 +856,75 @@ def create_chart(data):
     
     
 
-    # Price and Volume Plot
+ 
+    
+        # Main Price and Volume Plot
     ax1.set_xlabel('Date', color='white')
     ax1.set_ylabel('Price', color='tab:blue')
-    line_close, = ax1.plot(data.index, data['Close_TQQQ'], color='tab:blue', label='Close Price')
+    
+    # Collect all plotted lines and labels
+    lines_main = [
+        line_close, line_short_sma, line_long_sma, line_ema,
+        line_upper_bb, line_lower_bb, line_chikou
+    ]
+    labels_main = [
+        'Closing Price', '50-Day SMA', '200-Day SMA',
+        'EMA (50)', 'Upper Bollinger Band', 'Lower Bollinger Band', 'Chikou Span'
+    ]
+    
+    # Add the scatter points and ichimoku patches with labels
+    scatter_and_patches = [
+        scatter_sar, cloud_bullish, cloud_bearish
+    ]
+    scatter_labels = [
+        'Parabolic SAR', 'Ichimoku Bullish Cloud', 'Ichimoku Bearish Cloud'
+    ]
+    
+    # Combine all elements for the legend
+    all_elements = lines_main + scatter_and_patches
+    all_labels = labels_main + scatter_labels
+    
+    # Filter out None or unsupported elements
+    filtered_elements = [element for element in all_elements if element is not None]
+    filtered_labels = [
+        label for element, label in zip(all_elements, all_labels) if element is not None
+    ]
+    
+    # Add the legend to the top-right corner
+    ax1.legend(
+        filtered_elements, filtered_labels,
+        loc='upper right',
+        facecolor='lightblue', edgecolor='white', fontsize=9
+    )
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    line_close, = ax1.plot(data.index, data['Close_SPY'], color='tab:blue', label='Close Price')
     line_short_sma, = ax1.plot(data.index, data['short_sma'], color='purple', linestyle='--', label='Short SMA (50)')
     line_long_sma, = ax1.plot(data.index, data['long_sma'], color='orange', linestyle='--', label='Long SMA (200)')
     line_ema, = ax1.plot(data.index, data['ema'], color='brown', linestyle='-', label='EMA (50)')
@@ -857,7 +933,7 @@ def create_chart(data):
     
     
     
-    #volume_colors = plt.cm.viridis(data['Volume_TQQQ'] / data['Volume_TQQQ'].max())
+    #volume_colors = plt.cm.viridis(data['Volume_SPY'] / data['Volume_SPY'].max())
     
 
 
@@ -899,7 +975,7 @@ def create_chart(data):
             
             
     
-    #ax2.bar(data.index, data['Volume_TQQQ'], color=volume_colors, alpha=0.6)
+    #ax2.bar(data.index, data['Volume_SPY'], color=volume_colors, alpha=0.6)
     
     
     
@@ -912,11 +988,11 @@ def create_chart(data):
      
 
     # Normalize volume values for color mapping
-    volume_colors = plt.cm.viridis(data['Volume_TQQQ'] / data['Volume_TQQQ'].max())
+    volume_colors = plt.cm.viridis(data['Volume_SPY'] / data['Volume_SPY'].max())
     # Plot the volume as bars
-    ax2.bar(data.index, data['Volume_TQQQ'], color=volume_colors, alpha=0.6)
+    ax2.bar(data.index, data['Volume_SPY'], color=volume_colors, alpha=0.6)
     # Set the lower limit to zero and increase the upper limit if necessary to ensure all data is visible
-    ax2.set_ylim(bottom=0, top=data['Volume_TQQQ'].max() * 1.1)  # Adjust the top limit to allow space
+    ax2.set_ylim(bottom=0, top=data['Volume_SPY'].max() * 1.1)  # Adjust the top limit to allow space
     # Adjust the y-axis label distance from the axis
     ax2.tick_params(axis='y', labelcolor='tab:green', pad=105, labelsize=15)  # Set labelsize to adjust font size
     # Format the y-axis ticks to avoid scientific notation
@@ -940,18 +1016,18 @@ def create_chart(data):
     ax_rsi.axhline(70, color='red', linestyle='--', label='Overbought (70)')
     
     
-    ax_rsi.set_title('RSI with Volume and Price Overlay', color='white')
-    ax_rsi.plot(data.index, data['Close_TQQQ'], color='tab:blue', linestyle='--', label='Close Price')  # Price overlay
+    ax_rsi.set_title('RSI / Volume / Price Overlay', color='white')
+    ax_rsi.plot(data.index, data['Close_SPY'], color='tab:blue', linestyle='--', label='Close Price')  # Price overlay
     ax_rsi.legend(facecolor='lightblue', edgecolor='white', loc='upper right')
     
     
     ax_rsi_volume = ax_rsi.twinx()
-    ax_rsi_volume.bar(data.index, data['Volume_TQQQ'], color=volume_colors, alpha=0.3)
+    ax_rsi_volume.bar(data.index, data['Volume_SPY'], color=volume_colors, alpha=0.3)
 
     # MACD Plot
     
     
-    ax_rsi_volume.set_ylim(0, data['Volume_TQQQ'].max() * 1.1)
+    ax_rsi_volume.set_ylim(0, data['Volume_SPY'].max() * 1.1)
     ax_rsi_volume.set_yticklabels([])
     
     # MACD Plot
@@ -963,11 +1039,11 @@ def create_chart(data):
     ax_macd.plot(data.index, data['signal_line'], label='Signal Line', color='red')
 
 
-    ax_macd.set_title('MACD with Volume and Price Overlay', color='white')
+    ax_macd.set_title('MACD / Volume / Price Overlay', color='white')
     
     # Create a secondary y-axis for the closing price
     ax_price = ax_macd.twinx()  # Twin axis for the price line
-    ax_price.plot(data.index, data['Close_TQQQ'], color='orange', linestyle='--', label='Close Price')  # Price overlay
+    ax_price.plot(data.index, data['Close_SPY'], color='orange', linestyle='--', label='Close Price')  # Price overlay
     ax_price.set_ylabel('Close Price', color='orange')  # Add a label for clarity
     ax_price.tick_params(axis='y', colors='orange')  # Color the ticks to match the price line
     
@@ -976,11 +1052,11 @@ def create_chart(data):
     ax_macd_volume.spines["right"].set_position(("outward", 60))  # Offset the volume y-axis for better visibility
     ax_macd_volume.bar(
         data.index,
-        data['Volume_TQQQ'],
-        color=plt.cm.viridis(data['Volume_TQQQ'] / data['Volume_TQQQ'].max()),
+        data['Volume_SPY'],
+        color=plt.cm.viridis(data['Volume_SPY'] / data['Volume_SPY'].max()),
         alpha=0.3
     )
-    ax_macd_volume.set_ylim(0, data['Volume_TQQQ'].max() * 1.1)
+    ax_macd_volume.set_ylim(0, data['Volume_SPY'].max() * 1.1)
     ax_macd_volume.set_yticklabels([])
     
     # Add a legend for clarity
@@ -1004,12 +1080,12 @@ def create_chart(data):
 
 
 	
-    ax_adx.set_title('ADX with Volume and Price Overlay', color='white')
-    ax_adx.plot(data.index, data['Close_TQQQ'], color='tab:blue', linestyle='--', label='Close Price')  # Price overlay
+    ax_adx.set_title('ADX / Volume / Price Overlay', color='white')
+    ax_adx.plot(data.index, data['Close_SPY'], color='tab:blue', linestyle='--', label='Close Price')  # Price overlay
     ax_adx.legend(facecolor='lightblue', edgecolor='white', loc='upper right')
     ax_adx_volume = ax_adx.twinx()
-    ax_adx_volume.bar(data.index, data['Volume_TQQQ'], color=plt.cm.viridis(data['Volume_TQQQ'] / data['Volume_TQQQ'].max()), alpha=0.3)
-    ax_adx_volume.set_ylim(0, data['Volume_TQQQ'].max() * 1.1)
+    ax_adx_volume.bar(data.index, data['Volume_SPY'], color=plt.cm.viridis(data['Volume_SPY'] / data['Volume_SPY'].max()), alpha=0.3)
+    ax_adx_volume.set_ylim(0, data['Volume_SPY'].max() * 1.1)
     ax_adx_volume.set_yticklabels([])
 
 
@@ -1021,12 +1097,12 @@ def create_chart(data):
     ax_stochastic.axhline(80, color='red', linestyle='--', label='Overbought (80)')
     
     
-    ax_stochastic.set_title('Stochastic Oscillator with Volume and Price Overlay', color='white')
-    ax_stochastic.plot(data.index, data['Close_TQQQ'], color='tab:blue', linestyle='--', label='Close Price')  # Price overlay
+    ax_stochastic.set_title('Stochastic Oscillator / Volume / Price Overlay', color='white')
+    ax_stochastic.plot(data.index, data['Close_SPY'], color='tab:blue', linestyle='--', label='Close Price')  # Price overlay
     ax_stochastic.legend(facecolor='lightblue', edgecolor='white', loc='upper right')
     ax_stochastic_volume = ax_stochastic.twinx()
-    ax_stochastic_volume.bar(data.index, data['Volume_TQQQ'], color=plt.cm.viridis(data['Volume_TQQQ'] / data['Volume_TQQQ'].max()), alpha=0.3)
-    ax_stochastic_volume.set_ylim(0, data['Volume_TQQQ'].max() * 1.1)
+    ax_stochastic_volume.bar(data.index, data['Volume_SPY'], color=plt.cm.viridis(data['Volume_SPY'] / data['Volume_SPY'].max()), alpha=0.3)
+    ax_stochastic_volume.set_ylim(0, data['Volume_SPY'].max() * 1.1)
     ax_stochastic_volume.set_yticklabels([])
     
     
@@ -1089,6 +1165,8 @@ def create_chart(data):
     check.ax.set_facecolor('gray')  # Set the background color for the check buttons
     # Adjust the click handler function if necessary
     def func(label):
+        global line_close, line_short_sma, line_long_sma, line_ema
+        global line_upper_bb, line_lower_bb, scatter_sar, cloud_bullish, cloud_bearish
         if label == 'Closing Price':
             line_close.set_visible(not line_close.get_visible())
         elif label == '50-Day SMA':
@@ -1116,6 +1194,72 @@ def create_chart(data):
     mplcursors.cursor([line_close, line_short_sma, line_long_sma, line_ema,
                     line_upper_bb, line_lower_bb, scatter_sar, line_chikou],
                     hover=True)
+                    
+    #print("line_close:", line_close)
+    #print("line_short_sma:", line_short_sma)
+    #print("line_long_sma:", line_long_sma)
+    #print("line_ema:", line_ema)
+    #print("line_upper_bb:", line_upper_bb)
+    #print("line_lower_bb:", line_lower_bb)
+    #print("line_chikou:", line_chikou)
+    #print("scatter_sar:", scatter_sar)
+    #print("cloud_bullish:", cloud_bullish)
+    #print("cloud_bearish:", cloud_bearish)
+    
+
+    
+ 
+      
+  
+    # Initialize figure and axis if not done globally
+    if fig is None or ax1 is None:
+        fig, ax1 = plt.subplots()
+    
+    # Example initialization of plot elements (ensure these are properly created in your code)
+    # line_close, line_short_sma, etc., should be assigned valid plot objects like Line2D or similar
+    line_close, = ax1.plot([], [], label='Closing Price')  # Replace with actual data
+    line_short_sma, = ax1.plot([], [], label='50-Day SMA')  # Replace with actual data
+    line_long_sma, = ax1.plot([], [], label='200-Day SMA')  # Replace with actual data
+    line_ema, = ax1.plot([], [], label='Expon MA50')  # Replace with actual data
+    line_upper_bb, = ax1.plot([], [], label='Upper Bollinger Band')  # Replace with actual data
+    line_lower_bb, = ax1.plot([], [], label='Lower Bollinger Band')  # Replace with actual data
+    line_chikou, = ax1.plot([], [], label='Chikou')  # Replace with actual data
+    scatter_sar = ax1.scatter([], [], label='Parabolic SAR')  # Replace with actual data
+    
+    # Proxy artists for fill_between elements
+    bullish_patch = mpatches.Patch(color='green', alpha=0.2, label='Ichimoku Bull')
+    bearish_patch = mpatches.Patch(color='red', alpha=0.2, label='Ichimoku Bear')
+    
+    # Define the legend items (matching checkboxes)
+    legend_lines = [
+        line_close, line_short_sma, line_long_sma, line_ema,
+        line_upper_bb, line_lower_bb, line_chikou, scatter_sar,
+        bullish_patch, bearish_patch
+    ]
+    legend_labels = [
+        'Closing Price', '50-Day SMA', '200-Day SMA',
+        'Expon MA50', 'Upper Bollinger Band', 'Lower Bollinger Band',
+        'Chikou', 'Parabolic SAR', 'Ichimoku Bull', 'Ichimoku Bear'
+    ]
+    
+    # Filter out NoneType elements from legend lines and labels
+    filtered_legend_lines = [line for line in legend_lines if line is not None]
+    filtered_legend_labels = [label for line, label in zip(legend_lines, legend_labels) if line is not None]
+    
+    # Add a legend below the checkboxes
+    legend_ax = fig.add_axes([0.87, 0.1, 0.12, 0.15], facecolor='black')  # Lower the legend and increase height
+    legend_ax.axis('off')  # Hide axes for the legend area
+    
+    # Add the legend to the new legend area
+    legend_ax.legend(
+        filtered_legend_lines, filtered_legend_labels,
+        loc='center', facecolor='lightblue', edgecolor='white', fontsize=14
+    )
+    
+ 
+    
+                    
+                    
     fig.subplots_adjust(top=0.95, bottom=0.05, left=0.05, right=0.85, hspace=0.5)
     cursor = Cursor(ax1, useblit=True, color='white', linewidth=1)
      # plt.pause(0.01)  # Keep the Matplotlib event loop responsive
@@ -1150,7 +1294,7 @@ async def async_main():
     Main entry point for the program with async functionality.
     """
     global fig  # Use the global variable
-    ticker = 'TQQQ'
+    ticker = 'SPY'
 
     try:
         # Fetch and process data asynchronously
