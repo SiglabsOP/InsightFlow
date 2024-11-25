@@ -17,8 +17,11 @@ from tkinter import ttk
 import threading
 import os
 import time
-import joblib  # Install with `pip install joblib` (c) SIG LABS 2024 Insightflow 308.13
+import joblib  # Install with `pip install joblib`
 import asyncio
+import shutil
+import sys
+import subprocess  # Make sure subprocess is imported
 
 
 from matplotlib.widgets import Slider
@@ -27,8 +30,59 @@ USE_THREADING = True  # Set to True to enable threading
 hover_last_update = 0  # Initialize at the start of the script
 
 
-tickerr = 'TQQQ'  # Define the ticker globally
- 
+tickerr = 'TQQQ'  # Default value, dynamically updated by target.py
+
+def validate_and_clean_cache():
+    """
+    Validate the cache directory and remove corrupted or incompatible files.
+    Automatically restarts the program if cache corruption is detected.
+    """
+    cache_dir = 'cache'
+    corrupted = False
+    expected_columns = {'Adj Close_TQQQ', 'Close_TQQQ', 'High_TQQQ', 'Low_TQQQ', 'Open_TQQQ', 'Volume_TQQQ'}
+
+    if os.path.exists(cache_dir):
+        for file in os.listdir(cache_dir):
+            file_path = os.path.join(cache_dir, file)
+            if file.endswith('.pkl'):  # Only check .pkl files
+                try:
+                    print(f"Validating cache file: {file}")
+                    data = joblib.load(file_path)  # Attempt to load the file
+
+                    # Check for required columns
+                    if not expected_columns.issubset(set(data.columns)):
+                        print(f"Incompatible cache detected: {file}. Missing columns.")
+                        corrupted = True
+                        break
+                except Exception as e:
+                    print(f"Corrupted cache detected: {file}. Error: {e}")
+                    corrupted = True
+                    break
+
+        if corrupted:
+            print("Cache corruption detected. Deleting all cache files...")
+            for file in os.listdir(cache_dir):
+                file_path = os.path.join(cache_dir, file)
+                os.remove(file_path)
+            print("Cache cleaned successfully. Restarting the program...")
+            restart_program()  # Restart the script
+    else:
+        print("No cache directory found. Proceeding as normal.")
+
+
+def restart_program():
+    """
+    Restart the current program.
+    """
+    try:
+        # Get the full path of the Python executable
+        python_executable = sys.executable
+
+        # Ensure to pass the correct Python executable and script
+        subprocess.Popen([python_executable] + sys.argv)
+        sys.exit()
+    except Exception as e:
+        print(f"Failed to restart the program: {e}")
  
 
 
@@ -82,6 +136,10 @@ def fetch_data_threaded(ticker, period, interval, callback=None):
         print(f"Fetching data for {ticker} with period={period} and interval={interval}...")
         data = get_data(ticker, period, interval)
         print("Data fetching complete.")
+        print("Fetched data:")
+        print(data.head())
+        print(data.columns)
+
         return data  # Return the actual data
 
     def on_complete(future):
@@ -250,7 +308,7 @@ def show_loading_window():
 
     # Create the progress bar
     progress_bar = ttk.Progressbar(window, style="TProgressbar", length=300, mode="determinate")
-    progress_bar.pack(pady=20)
+    progress_bar.pack(pady=8)
 
     # Start the loading in a separate thread to not freeze the GUI
     thread = threading.Thread(target=load_program, args=(progress_bar, window))
@@ -271,18 +329,68 @@ show_loading_window()
  
  
 def fetch_and_cache_data(ticker, period, interval, cache_path):
-    # This function runs in the background to fetch and cache data
     print("Fetching data from yfinance in background")
     data = yf.download(ticker, period=period, interval=interval)
+    print("Columns in downloaded data:", data.columns)
 
-    # Rename columns if they are MultiIndex
-    if isinstance(data.columns, pd.MultiIndex):
-        data.columns = ['_'.join(col).strip() for col in data.columns.values]
+    # Flatten MultiIndex columns if present
+    data.columns = ['_'.join(col).strip() if isinstance(col, tuple) else col for col in data.columns]
 
     # Save fetched data to cache
-    joblib.dump(data, cache_path)
-    print("Data cached for future use")
+    if not data.empty:
+        joblib.dump(data, cache_path)
+        print("Data cached successfully.")
+    else:
+        print(f"No data found for ticker: {ticker}")
 
+
+def get_data(ticker='TQQQ', period='5y', interval='1d', use_cache=True):
+    # Create the cache directory if it doesn't exist
+    cache_dir = 'cache'
+    if not os.path.exists(cache_dir):
+        os.makedirs(cache_dir)
+
+    # Define a cache path based on the ticker, period, and interval inside the 'cache' directory
+    cache_path = os.path.join(cache_dir, f"cache_{ticker}_{period}_{interval}.pkl")
+
+    # If caching is disabled, fetch data directly from yfinance
+    if not use_cache:
+        print("Caching is disabled. Fetching data from yfinance")
+        data = yf.download(ticker, period=period, interval=interval)
+    else:
+        # Check if cached data exists
+        if os.path.exists(cache_path):
+            print("Loading data from cache")
+            data = joblib.load(cache_path)  # Load from cache
+        else:
+            # Fetch data from yfinance in a separate thread
+            print("No cache found, fetching data from yfinance in background")
+            thread = threading.Thread(target=fetch_and_cache_data, args=(ticker, period, interval, cache_path))
+            thread.daemon = True  # Ensure the thread closes when the main program ends
+            thread.start()
+            thread.join()  # Wait for the thread to complete before proceeding
+
+            # Load data again after the thread completes fetching
+            if os.path.exists(cache_path):
+                data = joblib.load(cache_path)
+            else:
+                data = pd.DataFrame()  # Fallback if fetch failed
+                
+                    # Debugging: Print the fetched data and columns
+    print("Fetched data:")
+    print(data.head())  # Show the first few rows of the data
+    print("Columns in data:", list(data.columns))  # Print column names
+    print("Data columns after processing:", data.columns)
+
+    # Check if the data is empty
+    if data.empty:
+        print(f"No data found for ticker: {ticker}")
+        return pd.DataFrame()  # Return an empty DataFrame to prevent further errors
+
+    return data
+
+
+ 
 def get_data(ticker='TQQQ', period='5y', interval='1d', use_cache=True):
     # Create the cache directory if it doesn't exist
     cache_dir = 'cache'
@@ -307,94 +415,144 @@ def get_data(ticker='TQQQ', period='5y', interval='1d', use_cache=True):
             thread = threading.Thread(target=fetch_and_cache_data, args=(ticker, period, interval, cache_path))
             thread.daemon = True  # Ensure the thread is closed when the main program ends
             thread.start()
-            # While waiting for the background thread to finish, return empty or initial data
-            data = pd.DataFrame()  # Empty dataframe or placeholder
+            data = pd.DataFrame()  # Empty dataframe as a placeholder
+ 
+def get_data(ticker='TQQQ', period='5y', interval='1d', use_cache=True):
+    # Create the cache directory if it doesn't exist
+    cache_dir = 'cache'
+    if not os.path.exists(cache_dir):
+        os.makedirs(cache_dir)
+    
+    # Define a cache path based on the ticker, period, and interval inside the 'cache' directory
+    cache_path = os.path.join(cache_dir, f"cache_{ticker}_{period}_{interval}.pkl")
+    
+    # If caching is disabled, fetch data directly from yfinance
+    if not use_cache:
+        print("Caching is disabled. Fetching data from yfinance")
+        data = yf.download(ticker, period=period, interval=interval)
+    else:
+        if os.path.exists(cache_path):
+            print("Loading data from cache")
+            data = joblib.load(cache_path)  # Load from cache
+            print("Loaded cached data columns:", list(data.columns))  # Print cached data's columns
 
-    return data    
-    
-    
-    
+        else:
+            # Fetch data from yfinance in a separate thread
+            print("No cache found, fetching data from yfinance in background")
+            thread = threading.Thread(target=fetch_and_cache_data, args=(ticker, period, interval, cache_path))
+            thread.daemon = True  # Ensure the thread is closed when the main program ends
+            thread.start()
+            thread.join()  # Ensure the thread finishes
+            data = pd.DataFrame()  # Empty dataframe as a placeholder
 
-# Calculate technical indicators
-def add_indicators(data):
+    # Check if the data is empty
+    if data.empty:
+        print(f"No data found for ticker: {ticker}")
+        return pd.DataFrame()  # Return an empty DataFrame to prevent further errors
+
+    return data
+    
+def add_indicators(data, ticker='TQQQ'):
+    """
+    Adds various technical indicators to the given data.
+
+    Parameters:
+        data (pd.DataFrame): The data containing stock prices and volume.
+        ticker (str): Stock ticker symbol to dynamically form column names (default is "TQQQ").
+
+    Returns:
+        pd.DataFrame: The data with added indicators.
+    """
+    # Define the required columns based on the ticker
+    close_col = f"Close_{ticker}"
+    volume_col = f"Volume_{ticker}"
+    high_col = f"High_{ticker}"
+    low_col = f"Low_{ticker}"
+
+    # Check for required columns
+    if close_col not in data.columns:
+        raise KeyError(f"Error: '{close_col}' column not found in data.")
+    if volume_col not in data.columns:
+        raise KeyError(f"Error: '{volume_col}' column not found in data.")
+    if high_col not in data.columns:
+        raise KeyError(f"Error: '{high_col}' column not found in data.")
+    if low_col not in data.columns:
+        raise KeyError(f"Error: '{low_col}' column not found in data.")
+
     # Moving Averages
-    data['short_sma'] = data['Close_TQQQ'].rolling(window=50).mean()
-    data['long_sma'] = data['Close_TQQQ'].rolling(window=200).mean()
-    data['ema'] = data['Close_TQQQ'].ewm(span=50, adjust=False).mean()  # EMA
+    data['short_sma'] = data[close_col].rolling(window=50).mean()
+    data['long_sma'] = data[close_col].rolling(window=200).mean()
+    data['ema'] = data[close_col].ewm(span=50, adjust=False).mean()
 
     # Bollinger Bands
-    sma = data['Close_TQQQ'].rolling(window=20).mean()
-    std = data['Close_TQQQ'].rolling(window=20).std()
+    sma = data[close_col].rolling(window=20).mean()
+    std = data[close_col].rolling(window=20).std()
     data['upper_band'] = sma + (std * 2)
     data['lower_band'] = sma - (std * 2)
 
-    # RSI
-    delta = data['Close_TQQQ'].diff(1)
-    gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
-    loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+    # RSI (Relative Strength Index)
+    delta = data[close_col].diff(1)
+    gain = delta.where(delta > 0, 0).rolling(window=14).mean()
+    loss = -delta.where(delta < 0, 0).rolling(window=14).mean()
     rs = gain / loss
     data['rsi'] = 100 - (100 / (1 + rs))
 
-    # MACD
-    short_ema = data['Close_TQQQ'].ewm(span=12, adjust=False).mean()
-    long_ema = data['Close_TQQQ'].ewm(span=26, adjust=False).mean()
+    # MACD (Moving Average Convergence Divergence)
+    short_ema = data[close_col].ewm(span=12, adjust=False).mean()
+    long_ema = data[close_col].ewm(span=26, adjust=False).mean()
     data['macd'] = short_ema - long_ema
     data['signal_line'] = data['macd'].ewm(span=9, adjust=False).mean()
 
     # Ichimoku Cloud
-    high9 = data['High_TQQQ'].rolling(window=9).max()
-    low9 = data['Low_TQQQ'].rolling(window=9).min()
+    high9 = data[high_col].rolling(window=9).max()
+    low9 = data[low_col].rolling(window=9).min()
     data['tenkan_sen'] = (high9 + low9) / 2
-    high26 = data['High_TQQQ'].rolling(window=26).max()
-    low26 = data['Low_TQQQ'].rolling(window=26).min()
+
+    high26 = data[high_col].rolling(window=26).max()
+    low26 = data[low_col].rolling(window=26).min()
     data['kijun_sen'] = (high26 + low26) / 2
+
+    high52 = data[high_col].rolling(window=52).max()
+    low52 = data[low_col].rolling(window=52).min()
     data['senkou_span_a'] = ((data['tenkan_sen'] + data['kijun_sen']) / 2).shift(26)
-    high52 = data['High_TQQQ'].rolling(window=52).max()
-    low52 = data['Low_TQQQ'].rolling(window=52).min()
     data['senkou_span_b'] = ((high52 + low52) / 2).shift(26)
-    data['chikou_span'] = data['Close_TQQQ'].shift(-26)
+    data['chikou_span'] = data[close_col].shift(-26)
 
-    # VWMA
-    typical_price = (data['High_TQQQ'] + data['Low_TQQQ'] + data['Close_TQQQ']) / 3
-    vwma = (typical_price * data['Volume_TQQQ']).rolling(window=20).sum() / data['Volume_TQQQ'].rolling(window=20).sum()
-    data['vwma'] = vwma
+    # VWMA (Volume-Weighted Moving Average)
+    typical_price = (data[high_col] + data[low_col] + data[close_col]) / 3
+    data['vwma'] = (typical_price * data[volume_col]).rolling(window=20).sum() / data[volume_col].rolling(window=20).sum()
 
-    # Parabolic SAR (simplified for plotting)
+
     data['parabolic_sar'] = data['Low_TQQQ'].rolling(window=2).min()
+    
+    
+    # ADX (Average Directional Index)
+    high = data[high_col]
+    low = data[low_col]
+    close = data[close_col]
+    tr = pd.concat([high - low, abs(high - close.shift(1)), abs(low - close.shift(1))], axis=1).max(axis=1)
 
-    # ADX (Average Directional Index) calculation
-    high = data['High_TQQQ']
-    low = data['Low_TQQQ']
-    close = data['Close_TQQQ']
-    
-    # Calculate True Range (TR)
-    tr = pd.concat([high - low, abs(high - close.shift(1)), abs(low - close.shift(1))], axis=1)
-    tr = tr.max(axis=1)
-    
-    # Calculate +DM and -DM
     plus_dm = high.diff()
     minus_dm = -low.diff()
     plus_dm = plus_dm.where((plus_dm > minus_dm) & (plus_dm > 0), 0)
     minus_dm = minus_dm.where((minus_dm > plus_dm) & (minus_dm > 0), 0)
 
-    # Smooth the values (using a 14-period smoothing)
     tr_smooth = tr.rolling(window=14).sum()
     plus_dm_smooth = plus_dm.rolling(window=14).sum()
     minus_dm_smooth = minus_dm.rolling(window=14).sum()
 
-    # Calculate ADX
     plus_di = 100 * (plus_dm_smooth / tr_smooth)
     minus_di = 100 * (minus_dm_smooth / tr_smooth)
-    adx = 100 * (abs(plus_di - minus_di) / (plus_di + minus_di))
-    data['adx'] = adx
+    data['adx'] = 100 * (abs(plus_di - minus_di) / (plus_di + minus_di))
 
     # Stochastic Oscillator
-    low14 = data['Low_TQQQ'].rolling(window=14).min()
-    high14 = data['High_TQQQ'].rolling(window=14).max()
-    data['stochastic'] = 100 * (data['Close_TQQQ'] - low14) / (high14 - low14)
+    low14 = data[low_col].rolling(window=14).min()
+    high14 = data[high_col].rolling(window=14).max()
+    data['stochastic'] = 100 * (data[close_col] - low14) / (high14 - low14)
 
     return data
-    plt.pause(0.01)  # Keep the Matplotlib event loop responsive
+
+
 
 # Create the price and volume chart with indicators
  
@@ -518,7 +676,7 @@ def show_help(event):
         "   - Formula: VWMA = Σ(Price * Volume) / Σ(Volume).\n"
         "   - **Usage**: Highlights price levels where trading activity is concentrated.\n\n"
         
-        "(c) 2024 SIG LABS - Proprietary Technical Analytics Software v308.13\n"
+        "(c) 2024 SIG LABS - Proprietary Technical Analytics Software v400.03\n"
         "All rights reserved. Unauthorized distribution is prohibited.\n"
     )
     
@@ -545,45 +703,41 @@ def show_help(event):
     plt.pause(0.01)  # Keep the Matplotlib event loop responsive
 
     
- 
-
- 
 def create_chart(data):
-    # Create the main figure with subplots
+    """
+    Create a detailed chart with subplots for price, volume, and various indicators.
+
+    Parameters:
+        data (pd.DataFrame): The data containing stock prices, volume, and indicators.
+    """
     global fig, ax1  # Declare ax1 as global
 
     fig = plt.figure(figsize=(16, 20))
- 
-
     fig.canvas.manager.set_window_title('InsightFlow Private Investment Software')
     fig.canvas.mpl_connect('resize_event', update_figsize)
-    fig.patch.set_facecolor('black')  # Set figure background
-    fig.patch.set_alpha(0.7)  # Set transparency (0 is fully transparent, 1 is fully opaque)
-    
-        # Maximize the window
+    fig.patch.set_facecolor('black')  # Set figure background color
+    fig.patch.set_alpha(0.7)  # Set transparency for the figure
+
+    # Maximize the window
     manager = plt.get_current_fig_manager()
     try:
-        # For TkAgg backend (used by default)
-        manager.window.state('zoomed')  # Windows-specific: Maximized
+        manager.window.state('zoomed')  # Maximize for TkAgg backend
     except AttributeError:
         try:
-            # For QT backend
-            manager.window.showMaximized()
+            manager.window.showMaximized()  # Maximize for QT backend
         except AttributeError:
             print("Maximizing not supported for this backend.")
-            
-            
-    
-    button_notes_ax = fig.add_axes([0.22, 0.95, 0.08, 0.03])  # Position for Notes button
+
+    # Buttons for Notes and Target Analysis
+    button_notes_ax = fig.add_axes([0.22, 0.95, 0.08, 0.03])
     notes_button = Button(button_notes_ax, 'NOTES', color='#3498db', hovercolor='#2980b9')
-    notes_button.on_clicked(lambda event: show_notes())  # Open the notes popup
-    
-    button_target_ax = fig.add_axes([0.32, 0.95, 0.08, 0.03])  # Position for Target button
+    notes_button.on_clicked(lambda event: show_notes())
+
+    button_target_ax = fig.add_axes([0.32, 0.95, 0.08, 0.03])
     target_button = Button(button_target_ax, 'Analyse Asset', color='#3498db', hovercolor='#2980b9')
-    target_button.on_clicked(launch_target)  # Bind the button to the launch function
+    target_button.on_clicked(launch_target)
 
-
-    # Create a gridspec for arranging subplots
+    # Create subplots using gridspec
     gs = fig.add_gridspec(5, 1, height_ratios=[4, 1, 1, 1, 1])
     ax1 = fig.add_subplot(gs[0])
     ax2 = ax1.twinx()
@@ -591,46 +745,47 @@ def create_chart(data):
     ax_macd = fig.add_subplot(gs[2], sharex=ax1)
     ax_adx = fig.add_subplot(gs[3], sharex=ax1)
     ax_stochastic = fig.add_subplot(gs[4], sharex=ax1)
- 
- 
- 
- 
- 
- 
- 
- 
- 
- 
- 
-    # Add a custom help button
-    button_ax = fig.add_axes([0.02, 0.95, 0.08, 0.03])  # Smaller button
+
+    # Custom Help Button
+    button_ax = fig.add_axes([0.02, 0.95, 0.08, 0.03])
     button_rect = Rectangle((0, 0), 1, 1, color="#2ecc71", transform=button_ax.transAxes, zorder=0)
     button_ax.add_patch(button_rect)
-
-    # Create the button widget
     help_button = Button(button_ax, '', color='#27ae60', hovercolor='#1abc9c')
-
-    # Style the button text
     help_button.ax.text(
-        0.5, 0.5, 'HELP',
-        transform=button_ax.transAxes,
-        fontsize=8, fontweight='bold',
-        ha='center', va='center',
-        color='blue'
+        0.5, 0.5, 'HELP', transform=button_ax.transAxes, fontsize=8,
+        fontweight='bold', ha='center', va='center', color='blue'
     )
-
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
     last_update_time = 0  # Keep track of the last update time
-
     def on_mouse_move(event):
         global last_update_time
         if event.inaxes:
             current_time = time.time()
-            if current_time - last_update_time > 0.1:  # Update only every 50ms
+            if current_time - last_update_time > 0.05:  # Update only every 50ms
                 fig.canvas.draw_idle()  # Queue the redraw
                 last_update_time = current_time
-
  
-
     def on_hover(event):
         global hover_last_update
         current_time = time.time()
@@ -641,16 +796,22 @@ def create_chart(data):
                 button_rect.set_color('#2ecc71')  # Reset color when not hovering
             fig.canvas.draw_idle()
             hover_last_update = current_time
-
-
     # Add the hover effect to the canvas
     fig.canvas.mpl_connect('motion_notify_event', on_hover)
 
-    # Connect the button to the help callback
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
     help_button.on_clicked(show_help)
 
-
-    # Set axes background and text colors for all the subplots
+    # Set background colors and axis properties for all subplots
     for ax in [ax1, ax2, ax_rsi, ax_macd, ax_adx, ax_stochastic]:
         ax.set_facecolor('black')
         ax.tick_params(axis='x', colors='white')
@@ -660,12 +821,12 @@ def create_chart(data):
         ax.spines['left'].set_color('white')
         ax.spines['right'].set_color('white')
 
-  
-    # Add Close Button
-    close_button_ax = fig.add_axes([0.12, 0.95, 0.08, 0.03])  # Define position and size
+    # Close Button
+    close_button_ax = fig.add_axes([0.12, 0.95, 0.08, 0.03])
     close_button = Button(close_button_ax, 'CLOSE', color='#e74c3c', hovercolor='#c0392b')
-    close_button.on_clicked(close_chart)  # Bind the button click event to the close_chart function
-
+    close_button.on_clicked(close_chart)
+    
+    
     # Optional: Add hover effect for better UX
     def on_hover_close(event):
         if close_button_ax.contains(event)[0]:
@@ -673,23 +834,41 @@ def create_chart(data):
         else:
             close_button.ax.set_facecolor('#e74c3c')  # Reset to original
         fig.canvas.draw_idle()
-
-    fig.canvas.mpl_connect('motion_notify_event', on_hover_close)
-
- 
+    fig.canvas.mpl_connect('motion_notify_event', on_hover_close)    
+    
+    
+    
+    
+    
+    
+    
+    
     
 
-    # Price and Volume
+    # Price and Volume Plot
     ax1.set_xlabel('Date', color='white')
     ax1.set_ylabel('Price', color='tab:blue')
     line_close, = ax1.plot(data.index, data['Close_TQQQ'], color='tab:blue', label='Close Price')
     line_short_sma, = ax1.plot(data.index, data['short_sma'], color='purple', linestyle='--', label='Short SMA (50)')
     line_long_sma, = ax1.plot(data.index, data['long_sma'], color='orange', linestyle='--', label='Long SMA (200)')
     line_ema, = ax1.plot(data.index, data['ema'], color='brown', linestyle='-', label='EMA (50)')
-
-    # Bollinger Bands
     line_upper_bb, = ax1.plot(data.index, data['upper_band'], color='red', linestyle='dotted', label='Upper Band')
     line_lower_bb, = ax1.plot(data.index, data['lower_band'], color='red', linestyle='dotted', label='Lower Band')
+    
+    
+    
+    #volume_colors = plt.cm.viridis(data['Volume_TQQQ'] / data['Volume_TQQQ'].max())
+    
+
+
+
+
+
+
+
+
+
+
 
     # Ichimoku Cloud
     cloud_bullish = ax1.fill_between(data.index, data['senkou_span_a'], data['senkou_span_b'],
@@ -698,69 +877,92 @@ def create_chart(data):
     cloud_bearish = ax1.fill_between(data.index, data['senkou_span_a'], data['senkou_span_b'],
                                      where=(data['senkou_span_a'] <= data['senkou_span_b']),
                                      color='red', alpha=0.2, label='Ichimoku Bearish')
-
     # Chikou Span
     line_chikou, = ax1.plot(data.index, data['chikou_span'], color='yellow', linestyle='dashed', label='Chikou Span')
 
-    # Parabolic SAR
+    
+    
     scatter_sar = ax1.scatter(data.index, data['parabolic_sar'], color='brown', label='Parabolic SAR', s=10)
 
+    
+    
     # Format dates on x-axis
 # Format dates on x-axis
     ax1.xaxis.set_major_locator(mdates.YearLocator())  # Major ticks: years
     ax1.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d'))  # Format: 'Year-Month-Day'
     ax1.xaxis.set_minor_locator(mdates.MonthLocator())  # Minor ticks: months
-
 # Customize major tick labels
-    plt.setp(ax1.xaxis.get_majorticklabels(), 
+    plt.setp(ax1.xaxis.get_majorticklabels(),
             rotation=45,  # Rotate labels for better readability
             ha='right',   # Align labels to the right
             color='white')  # Set label color
-
-# Volume
+            
+            
+    
+    #ax2.bar(data.index, data['Volume_TQQQ'], color=volume_colors, alpha=0.6)
+    
+    
+    
+    
+    
     ax2.set_ylabel('Volume', color='tab:green')
+    
+    
+    
+     
 
     # Normalize volume values for color mapping
     volume_colors = plt.cm.viridis(data['Volume_TQQQ'] / data['Volume_TQQQ'].max())
-
     # Plot the volume as bars
     ax2.bar(data.index, data['Volume_TQQQ'], color=volume_colors, alpha=0.6)
-
     # Set the lower limit to zero and increase the upper limit if necessary to ensure all data is visible
     ax2.set_ylim(bottom=0, top=data['Volume_TQQQ'].max() * 1.1)  # Adjust the top limit to allow space
-
     # Adjust the y-axis label distance from the axis
     ax2.tick_params(axis='y', labelcolor='tab:green', pad=105, labelsize=15)  # Set labelsize to adjust font size
-
-
     # Format the y-axis ticks to avoid scientific notation
     ax2.yaxis.set_major_formatter(ticker.FuncFormatter(lambda x, _: f'{x:,.0f}'))  # Use commas for large numbers
     ax2.yaxis.set_major_locator(ticker.MaxNLocator(integer=True))  # Force integer values
-
     # Optional: Adjust the spacing between bars or x-axis ticks if needed
     ax2.xaxis.set_major_formatter(plt.matplotlib.dates.DateFormatter('%Y-%m-%d'))  # Formatting x-axis labels
     ax2.tick_params(axis='x', rotation=45)  # Rotate x-axis labels to prevent overlap
+    
 
 
 
 
-    # RSI with custom y-axis limits
+
+
+
+    # RSI Plot
     ax_rsi.set_ylim(0, 100)
     ax_rsi.plot(data.index, data['rsi'], color='blue', label='RSI')
     ax_rsi.axhline(30, color='green', linestyle='--', label='Oversold (30)')
     ax_rsi.axhline(70, color='red', linestyle='--', label='Overbought (70)')
+    
+    
     ax_rsi.set_title('RSI with Volume and Price Overlay', color='white')
     ax_rsi.plot(data.index, data['Close_TQQQ'], color='tab:blue', linestyle='--', label='Close Price')  # Price overlay
     ax_rsi.legend(facecolor='lightblue', edgecolor='white', loc='upper right')
+    
+    
     ax_rsi_volume = ax_rsi.twinx()
-    ax_rsi_volume.bar(data.index, data['Volume_TQQQ'], color=plt.cm.viridis(data['Volume_TQQQ'] / data['Volume_TQQQ'].max()), alpha=0.3)
+    ax_rsi_volume.bar(data.index, data['Volume_TQQQ'], color=volume_colors, alpha=0.3)
+
+    # MACD Plot
+    
+    
     ax_rsi_volume.set_ylim(0, data['Volume_TQQQ'].max() * 1.1)
     ax_rsi_volume.set_yticklabels([])
     
+    # MACD Plot
     # MACD with dynamic y-axis limits
     ax_macd.set_ylim(data['macd'].min() - 5, data['macd'].max() + 5)
+    
+    
     ax_macd.plot(data.index, data['macd'], label='MACD', color='blue')
     ax_macd.plot(data.index, data['signal_line'], label='Signal Line', color='red')
+
+
     ax_macd.set_title('MACD with Volume and Price Overlay', color='white')
     
     # Create a secondary y-axis for the closing price
@@ -793,10 +995,15 @@ def create_chart(data):
     )
     
     
-    # ADX with fixed y-axis limits
+
+
+    # ADX Plot
     ax_adx.set_ylim(0, 100)
     ax_adx.plot(data.index, data['adx'], label='ADX', color='purple')
-    ax_adx.axhline(25, color='red', linestyle='--', label='ADX > 25 (Strong Trend)')
+    ax_adx.axhline(25, color='red', linestyle='--', label='Strong Trend (ADX > 25)')
+
+
+	
     ax_adx.set_title('ADX with Volume and Price Overlay', color='white')
     ax_adx.plot(data.index, data['Close_TQQQ'], color='tab:blue', linestyle='--', label='Close Price')  # Price overlay
     ax_adx.legend(facecolor='lightblue', edgecolor='white', loc='upper right')
@@ -804,12 +1011,16 @@ def create_chart(data):
     ax_adx_volume.bar(data.index, data['Volume_TQQQ'], color=plt.cm.viridis(data['Volume_TQQQ'] / data['Volume_TQQQ'].max()), alpha=0.3)
     ax_adx_volume.set_ylim(0, data['Volume_TQQQ'].max() * 1.1)
     ax_adx_volume.set_yticklabels([])
-    
-    # Stochastic Oscillator with fixed y-axis limits
+
+
+
+    # Stochastic Oscillator
     ax_stochastic.set_ylim(0, 100)
     ax_stochastic.plot(data.index, data['stochastic'], label='Stochastic Oscillator', color='orange')
     ax_stochastic.axhline(20, color='green', linestyle='--', label='Oversold (20)')
     ax_stochastic.axhline(80, color='red', linestyle='--', label='Overbought (80)')
+    
+    
     ax_stochastic.set_title('Stochastic Oscillator with Volume and Price Overlay', color='white')
     ax_stochastic.plot(data.index, data['Close_TQQQ'], color='tab:blue', linestyle='--', label='Close Price')  # Price overlay
     ax_stochastic.legend(facecolor='lightblue', edgecolor='white', loc='upper right')
@@ -818,71 +1029,64 @@ def create_chart(data):
     ax_stochastic_volume.set_ylim(0, data['Volume_TQQQ'].max() * 1.1)
     ax_stochastic_volume.set_yticklabels([])
     
- 
     
-     
- 
- 
 
-
-    # Add Slider
-    slider_ax = fig.add_axes([0.2, 0.02, 0.6, 0.03], facecolor='lightgrey')  # Slider position
-    date_range = mdates.date2num(data.index)  # Convert dates to numerical format for the slider
+    # Interactive Slider
+    slider_ax = fig.add_axes([0.2, 0.02, 0.6, 0.03])
+    date_range = mdates.date2num(data.index)
     slider = Slider(slider_ax, 'Time Range', date_range.min(), date_range.max(),
                     valinit=date_range.min(), valstep=(date_range.max() - date_range.min()) / 100)
 
-    # Slider callback to update the x-axis range
+
+
+
     def update(val):
+
+
         start_date = mdates.num2date(slider.val)  # Convert slider value back to a date
+
+
         ax1.set_xlim(start_date, data.index[-1])  # Adjust x-axis range dynamically
+
+
         fig.canvas.draw_idle()  # Redraw the figure
-         # plt.pause(0.01)  # Prevent freezing during updates
+
+
 
 
     slider.on_changed(update)  # Attach the callback to the slider    
     slider.on_changed(lambda val: Cursor(ax1, useblit=True, color='white', linewidth=1))
 
-
-    # Add title
+    # Set Title
     fig.suptitle(
-    f"InsightFlow - (c) SIG LABS 2024 Technical Analytics v308.13 - {tickerr}",
-    color='white',
-    fontsize=16,
-    x=0.7  # Move it more to the right (adjust as needed)
-)
-
-
-
-
+        f"InsightFlow - (c) SIG LABS 2024 Technical Analytics v400.03 - {tickerr}",
+        color='white', fontsize=16, x=0.7
+    )
+    
+	
 # Create checkbuttons with updated labels
     rax = plt.axes([0.87, 0.25, 0.12, 0.4], facecolor=(0.2, 0.2, 0.2, 0.7))
-
 # Updated labels (no numbers)
     labels = [
-        'Closing Price', 
-        '50-Day SMA', 
-        '200-Day SMA', 
-        'Expon MA50', 
-        'Bollinger Bands', 
-        'Ichimoku Bull', 
-        'Ichimoku Bear', 
-        'Chikou', 
+        'Closing Price',
+        '50-Day SMA',
+        '200-Day SMA',
+        'Expon MA50',
+        'Bollinger Bands',
+        'Ichimoku Bull',
+        'Ichimoku Bear',
+        'Chikou',
         'Parabolic SAR'
     ]
-
 # Keep visibility as a list of True
     visible = [True] * len(labels)
-
-
 # Initialize the check buttons with updated labels
     check = CheckButtons(rax, labels, visible)
 # Customize the label font size
     for label in check.labels:
         label.set_fontsize(14)  # Set font size for each checkbox label
-
 # Customize the appearance of the checkboxes
     check.ax.set_facecolor('gray')  # Set the background color for the check buttons
-
     # Adjust the click handler function if necessary
     def func(label):
         if label == 'Closing Price':
@@ -906,20 +1110,24 @@ def create_chart(data):
             scatter_sar.set_visible(not scatter_sar.get_visible())
         plt.draw()
  
-
     # Attach the click handler to the check buttons
     check.on_clicked(func)
     # Add tooltips to the lines and scatter points using mplcursors
-    mplcursors.cursor([line_close, line_short_sma, line_long_sma, line_ema, 
-                    line_upper_bb, line_lower_bb, scatter_sar, line_chikou], 
+    mplcursors.cursor([line_close, line_short_sma, line_long_sma, line_ema,
+                    line_upper_bb, line_lower_bb, scatter_sar, line_chikou],
                     hover=True)
-
-
     fig.subplots_adjust(top=0.95, bottom=0.05, left=0.05, right=0.85, hspace=0.5)
     cursor = Cursor(ax1, useblit=True, color='white', linewidth=1)
      # plt.pause(0.01)  # Keep the Matplotlib event loop responsive
  
+
+ 
+    
+    
+    
+
     plt.show()
+
 
 async def async_fetch_and_process_data(ticker, period, interval):
     """
@@ -951,13 +1159,16 @@ async def async_main():
 
         # Create the chart (can be made async if necessary)
         create_chart(data)
+    except KeyError as e:
+        #print(f"Column missing error detected: {e}. Restarting program.")
+        print(f"Rehashing new Ticker Data, hold on. Restarting program. (c) SIG LABS 2024")
+        restart_program()
     except Exception as e:
         print(f"Error during data fetching or processing: {e}")
     finally:
         # Shutdown the executor to release resources
         executor.shutdown(wait=True)
 
-
 if __name__ == "__main__":
-    # Run the async main function
+    validate_and_clean_cache()
     asyncio.run(async_main())

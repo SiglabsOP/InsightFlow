@@ -1,5 +1,5 @@
 # Insightflow
-InsightFlow v 308.13
+InsightFlow v 400.03
 
 Overview
 InsightFlow is an advanced financial analytics and charting application designed for traders and analysts seeking deep insights into market trends. It features powerful data visualization tools, a user-friendly interface, and the capability to integrate real-time and historical data for comprehensive market analysis.
@@ -65,6 +65,10 @@ Customize View:
 Toggle indicators, resize the chart, or adjust the time range to tailor the analysis to your needs.
 Sophistication
 InsightFlow is a comprehensive tool that seamlessly blends advanced technical analysis, efficient data handling, and a user-friendly interface. Designed for professional traders and enthusiasts alike, it empowers users to make data-driven decisions with clarity and precision.
+ 
+
+400 PATCH: - improved stability, cache corruption protection,ticker integrity check,codewide errorhandling,fallback mecanism 
+ 
  
 (c) Peter De Ceuster 2024
 Software Distribution Notice: https://peterdeceuster.uk/doc/code-terms 
