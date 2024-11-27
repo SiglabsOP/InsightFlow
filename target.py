@@ -9,7 +9,7 @@ import yfinance as yf
 
 def is_valid_ticker(ticker):
     """
-    Validates if the given ticker symbol is valid by checking its data availability.   (c) SIG LABS 2024 
+    Validates if the given ticker symbol is valid by checking its data availability.
     """
     try:
         test_data = yf.Ticker(ticker).history(period="1d")

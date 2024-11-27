@@ -1,5 +1,5 @@
 # Insightflow
-InsightFlow v 400.03
+InsightFlow v 6
 
 Overview
 InsightFlow is an advanced financial analytics and charting application designed for traders and analysts seeking deep insights into market trends. It features powerful data visualization tools, a user-friendly interface, and the capability to integrate real-time and historical data for comprehensive market analysis.
@@ -67,7 +67,11 @@ Sophistication
 InsightFlow is a comprehensive tool that seamlessly blends advanced technical analysis, efficient data handling, and a user-friendly interface. Designed for professional traders and enthusiasts alike, it empowers users to make data-driven decisions with clarity and precision.
  
 
-400 PATCH: - improved stability, cache corruption protection,ticker integrity check,codewide errorhandling,fallback mecanism 
+6 PATCH: - improved stability, cache corruption protection,ticker integrity check,codewide errorhandling,fallback mecanism,improved GUI,improved tooltips,improved signal depiction, various bugfixes
+
+
+If you enjoy this program, buy me a coffee https://buymeacoffee.com/siglabo
+You can use it free of charge or build upon my code. Happy trading!
  
  
 (c) Peter De Ceuster 2024
@@ -75,9 +79,9 @@ Software Distribution Notice: https://peterdeceuster.uk/doc/code-terms
 This software is released under the FPA General Code License.
  
   
- virustotal for the exe: MD5 16f30d7d6d50e0235d0084d21051b1b8
- (1 false positives and 70 passed)
-https://www.virustotal.com/gui/file/43ed78911575392ae12ccae7f9ed5229a5386901a02d8da2c438b44f358b7f5e?nocache=1
+ virustotal for the charter py file: MD5 5418064532ca5ce63fe7c3abad1c946a
+ (0 false positives and 63 passed)
+https://www.virustotal.com/gui/file/352457d6986248385c5b9620f1e5fa611627b86378d704bb7abf508e001377e1/details
  
  
  
