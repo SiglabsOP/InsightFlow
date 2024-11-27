@@ -83,7 +83,55 @@ This software is released under the FPA General Code License.
  (0 false positives and 63 passed)
 https://www.virustotal.com/gui/file/352457d6986248385c5b9620f1e5fa611627b86378d704bb7abf508e001377e1/details
  
- 
+
+Please use the save button to save your notes.
+Use the magnify glass to zoom in on a timescale.
+
+Key Features:
+Real-Time Data Acquisition and Caching:
+
+Efficiently fetches historical stock data using Yahoo Finance.
+Implements caching to minimize redundant requests, with automated cache validation and corruption handling.
+Advanced Technical Analysis Tools:
+
+Includes popular indicators such as:
+Simple Moving Average (SMA), Exponential Moving Average (EMA), and Bollinger Bands.
+Relative Strength Index (RSI), MACD, Ichimoku Cloud, and Stochastic Oscillator.
+Average Directional Index (ADX) and Volume-Weighted Moving Average (VWMA).
+Custom implementation of Parabolic SAR for trend reversal detection.
+Fully customizable indicator parameters.
+Interactive Multi-Panel Charting:
+
+Plots price, volume, and indicators across synchronized subplots.
+Dynamically adjustable chart sizes based on window dimensions.
+Includes volume bars for up/down trends with color-coded representation.
+GUI Integration with Tkinter:
+
+Interactive buttons for quick operations, including:
+"Analyze Asset" for selecting and analyzing new stock tickers.
+"Notes" for maintaining private commentary.
+"Help" for an integrated user guide on technical indicators.
+Supports both modal and non-modal interactions.
+Asynchronous Processing:
+
+Leverages Python’s asyncio for non-blocking data fetching and processing.
+Background tasks managed through ThreadPoolExecutor.
+Error Handling and Restart Logic:
+
+Proactively detects and resolves cache or ticker-related issues.
+Supports automated restart for recovery from unexpected errors.
+Enhanced Visualization:
+
+Custom themes and dynamic resizing ensure charts are easy to interpret.
+Integration with mplcursors and matplotlib.widgets for annotations and interactivity.
+Ticker Management:
+
+Facilitates quick replacement of stock tickers for analysis.
+Validates ticker availability before updating.
+Cross-Platform Execution:
+
+Compatible with Windows and Unix-like operating systems.
+Optimized subprocess handling for smooth script restarts. 
  
  
  
